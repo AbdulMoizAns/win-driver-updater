@@ -1,6 +1,6 @@
 """
 Modern Desktop GUI for Windows Driver Updater
-Built with Tkinter / TTK with Dark Theme styling and responsive threaded execution.
+Built with Tkinter / TTK with Dark Theme styling, Per-Monitor High-DPI support, and responsive threading.
 """
 
 import sys
@@ -20,6 +20,43 @@ from core.safety import SafetyManager
 from core.reporter import ReportManager, OperationLogger
 from core.scheduler import SchedulerManager
 
+try:
+    from PIL import Image, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
+
+def enable_high_dpi_awareness():
+    """Enables Windows Per-Monitor High-DPI Awareness (V2) to eliminate blurry UI and fonts."""
+    if sys.platform == "win32":
+        try:
+            # Per-Monitor V2 (Windows 10 1703+)
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        except Exception:
+            try:
+                # Per-Monitor V1 (Windows 8.1+)
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                try:
+                    # System DPI Aware (Windows Vista+)
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+
+
+def get_screen_scale_factor() -> float:
+    """Returns the display scale factor (e.g., 1.25 for 125%, 1.5 for 150%)."""
+    if sys.platform == "win32":
+        try:
+            hdc = ctypes.windll.user32.GetDC(0)
+            dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+            ctypes.windll.user32.ReleaseDC(0, hdc)
+            return max(1.0, dpi / 96.0)
+        except Exception:
+            return 1.0
+    return 1.0
+
 
 def is_admin() -> bool:
     try:
@@ -29,99 +66,165 @@ def is_admin() -> bool:
 
 
 class DriverUpdaterApp(tk.Tk):
-    """Main application window."""
+    """Main application window with crisp High-DPI rendering."""
 
     def __init__(self):
+        # Enable High-DPI awareness before Tk initialization
+        enable_high_dpi_awareness()
         super().__init__()
 
+        self.scale = get_screen_scale_factor()
+
+        # Set True high-dpi font scaling in Tk
+        try:
+            self.tk.call("tk", "scaling", (96.0 * self.scale) / 72.0)
+        except Exception:
+            pass
+
         self.title("Windows Driver Updater - Open Source & WHQL Manager")
-        self.geometry("1100x720")
-        self.minsize(900, 600)
+
+        # Responsive window dimensions based on DPI
+        win_w = int(1180 * min(self.scale, 1.25))
+        win_h = int(760 * min(self.scale, 1.25))
+        self.geometry(f"{win_w}x{win_h}")
+        self.minsize(int(960 * min(self.scale, 1.2)), int(620 * min(self.scale, 1.2)))
 
         self.devices: List[DeviceInfo] = []
         self.filtered_devices: List[DeviceInfo] = []
         self.selected_device: Optional[DeviceInfo] = None
         self.is_scanning = False
+        self.logo_img = None
+        self.icon_img = None
 
         self._configure_theme()
+        self._load_app_icons()
         self._build_ui()
         self._check_admin_banner()
+
+    def _load_app_icons(self):
+        """Loads and sets the window icon and header logo with anti-aliased scaling."""
+        logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg")
+        if HAS_PIL and os.path.exists(logo_path):
+            try:
+                pil_img = Image.open(logo_path)
+                # Taskbar / Window icon (32x32)
+                icon_size = (int(32 * self.scale), int(32 * self.scale))
+                self.icon_img = ImageTk.PhotoImage(pil_img.resize(icon_size, Image.Resampling.LANCZOS))
+                self.iconphoto(False, self.icon_img)
+
+                # Header logo (44x44)
+                hdr_size = (int(44 * self.scale), int(44 * self.scale))
+                self.logo_img = ImageTk.PhotoImage(pil_img.resize(hdr_size, Image.Resampling.LANCZOS))
+            except Exception:
+                pass
 
     def _configure_theme(self):
         self.style = ttk.Style(self)
         self.style.theme_use("clam")
 
-        self.bg_color = "#181824"
-        self.card_bg = "#232336"
-        self.card_light = "#2c2c44"
+        self.bg_color = "#12131c"
+        self.card_bg = "#1d1e2c"
+        self.card_light = "#282a3e"
+        self.card_hover = "#343752"
         self.text_color = "#ffffff"
-        self.text_muted = "#a0a0b8"
-        self.accent_color = "#3b82f6"  # modern blue
+        self.text_muted = "#9ca3af"
+        self.accent_color = "#3b82f6"  # modern electric blue
         self.accent_green = "#10b981"
         self.accent_amber = "#f59e0b"
         self.accent_red = "#ef4444"
 
         self.configure(bg=self.bg_color)
 
-        # Style TTK widgets
+        # High-DPI font sizing
+        f_size_sm = max(9, int(9 * min(self.scale, 1.15)))
+        f_size_base = max(10, int(10 * min(self.scale, 1.15)))
+        f_size_lg = max(15, int(15 * min(self.scale, 1.15)))
+
         self.style.configure(".", background=self.bg_color, foreground=self.text_color)
         self.style.configure("TFrame", background=self.bg_color)
         self.style.configure("Card.TFrame", background=self.card_bg, relief="flat")
-        self.style.configure("TLabel", background=self.bg_color, foreground=self.text_color, font=("Segoe UI", 10))
-        self.style.configure("Header.TLabel", font=("Segoe UI", 16, "bold"), foreground="#60a5fa")
-        self.style.configure("SubHeader.TLabel", font=("Segoe UI", 9), foreground=self.text_muted)
-        self.style.configure("Status.TLabel", font=("Segoe UI", 9, "bold"), foreground=self.accent_green)
+        self.style.configure("TLabel", background=self.bg_color, foreground=self.text_color, font=("Segoe UI", f_size_base))
+        self.style.configure("Header.TLabel", font=("Segoe UI", f_size_lg, "bold"), foreground="#60a5fa")
+        self.style.configure("SubHeader.TLabel", font=("Segoe UI", f_size_sm), foreground=self.text_muted)
+        self.style.configure("Status.TLabel", font=("Segoe UI", f_size_sm, "bold"), foreground=self.accent_green)
 
-        # Buttons
+        # Crisp Modern Buttons
+        btn_pad_x = int(14 * min(self.scale, 1.2))
+        btn_pad_y = int(7 * min(self.scale, 1.2))
+
         self.style.configure(
             "Primary.TButton",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", f_size_base, "bold"),
             background="#2563eb",
             foreground="#ffffff",
-            padding=(12, 6),
-            borderwidth=0
+            padding=(btn_pad_x, btn_pad_y),
+            borderwidth=0,
+            focuscolor="none"
         )
-        self.style.map("Primary.TButton", background=[("active", "#1d4ed8")])
+        self.style.map("Primary.TButton", background=[("active", "#1d4ed8"), ("pressed", "#1e40af")])
 
         self.style.configure(
             "Secondary.TButton",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", f_size_base),
             background=self.card_light,
             foreground=self.text_color,
-            padding=(10, 5),
-            borderwidth=0
+            padding=(btn_pad_x - 2, btn_pad_y),
+            borderwidth=0,
+            focuscolor="none"
         )
-        self.style.map("Secondary.TButton", background=[("active", "#3b3b5c")])
+        self.style.map("Secondary.TButton", background=[("active", self.card_hover)])
 
-        # Treeview
+        # High-DPI Treeview
+        row_height = int(34 * self.scale)
         self.style.configure(
             "Treeview",
             background=self.card_bg,
             foreground=self.text_color,
             fieldbackground=self.card_bg,
-            rowheight=28,
-            font=("Segoe UI", 9)
+            rowheight=row_height,
+            font=("Segoe UI", f_size_base),
+            borderwidth=0
         )
-        self.style.configure("Treeview.Heading", background=self.card_light, foreground="#ffffff", font=("Segoe UI", 10, "bold"))
-        self.style.map("Treeview", background=[("selected", "#3b82f6")])
+        self.style.configure(
+            "Treeview.Heading",
+            background=self.card_light,
+            foreground="#f3f4f6",
+            font=("Segoe UI", f_size_base, "bold"),
+            padding=(int(6 * self.scale), int(6 * self.scale))
+        )
+        self.style.map("Treeview", background=[("selected", "#2563eb")])
 
     def _build_ui(self):
-        # 1. Header Frame
-        header_frame = ttk.Frame(self, padding=(16, 12, 16, 6))
+        pad_x = int(18 * min(self.scale, 1.2))
+        pad_y = int(10 * min(self.scale, 1.2))
+
+        # 1. Header Frame with crisp Logo
+        header_frame = ttk.Frame(self, padding=(pad_x, pad_y, pad_x, 4))
         header_frame.pack(fill="x")
 
         title_box = ttk.Frame(header_frame)
         title_box.pack(side="left", fill="y")
-        ttk.Label(title_box, text="⚡ Windows Driver Updater", style="Header.TLabel").pack(anchor="w")
-        ttk.Label(title_box, text="Hardware Scanner & WHQL Driver Deployment Tool", style="SubHeader.TLabel").pack(anchor="w")
+
+        if self.logo_img:
+            logo_lbl = tk.Label(title_box, image=self.logo_img, bg=self.bg_color)
+            logo_lbl.pack(side="left", padx=(0, 12))
+
+        txt_box = ttk.Frame(title_box)
+        txt_box.pack(side="left", fill="y")
+        ttk.Label(txt_box, text="Windows Driver Updater", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(txt_box, text="Hardware Scanner & WHQL Driver Deployment Tool", style="SubHeader.TLabel").pack(anchor="w")
 
         # Admin Badge
         self.admin_badge_var = tk.StringVar(value="Checking privileges...")
-        self.admin_badge_lbl = ttk.Label(header_frame, textvariable=self.admin_badge_var, font=("Segoe UI", 9, "bold"))
+        self.admin_badge_lbl = ttk.Label(
+            header_frame,
+            textvariable=self.admin_badge_var,
+            font=("Segoe UI", max(9, int(9 * min(self.scale, 1.15))), "bold")
+        )
         self.admin_badge_lbl.pack(side="right", padx=10)
 
         # 2. Action Toolbar
-        toolbar = ttk.Frame(self, padding=(16, 6))
+        toolbar = ttk.Frame(self, padding=(pad_x, int(8 * min(self.scale, 1.2))))
         toolbar.pack(fill="x")
 
         ttk.Button(toolbar, text="🔍 Scan Drivers", style="Primary.TButton", command=self.start_scan).pack(side="left", padx=4)
@@ -132,17 +235,26 @@ class DriverUpdaterApp(tk.Tk):
         ttk.Button(toolbar, text="📂 Device Manager", style="Secondary.TButton", command=self.open_device_manager).pack(side="right", padx=4)
 
         # 3. Filter & Search Bar
-        filter_bar = ttk.Frame(self, padding=(16, 6))
+        filter_bar = ttk.Frame(self, padding=(pad_x, 6))
         filter_bar.pack(fill="x")
 
-        ttk.Label(filter_bar, text="Category:", foreground=self.text_muted).pack(side="left", padx=(0, 6))
+        f_size_base = max(10, int(10 * min(self.scale, 1.15)))
+
+        ttk.Label(filter_bar, text="Category:", foreground=self.text_muted).pack(side="left", padx=(0, 8))
         self.category_var = tk.StringVar(value="All")
         categories = ["All", "Net", "Display", "MEDIA", "Bluetooth", "System", "Mouse", "Keyboard", "Errors / Missing"]
-        cat_combo = ttk.Combobox(filter_bar, textvariable=self.category_var, values=categories, state="readonly", width=14)
-        cat_combo.pack(side="left", padx=(0, 16))
+        cat_combo = ttk.Combobox(
+            filter_bar,
+            textvariable=self.category_var,
+            values=categories,
+            state="readonly",
+            width=16,
+            font=("Segoe UI", f_size_base)
+        )
+        cat_combo.pack(side="left", padx=(0, 20))
         cat_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_filters())
 
-        ttk.Label(filter_bar, text="Search:", foreground=self.text_muted).pack(side="left", padx=(0, 6))
+        ttk.Label(filter_bar, text="Search:", foreground=self.text_muted).pack(side="left", padx=(0, 8))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *args: self.apply_filters())
         search_entry = tk.Entry(
@@ -154,8 +266,9 @@ class DriverUpdaterApp(tk.Tk):
             relief="flat",
             highlightthickness=1,
             highlightcolor=self.accent_color,
-            font=("Segoe UI", 9),
-            width=28
+            highlightbackground=self.card_light,
+            font=("Segoe UI", f_size_base),
+            width=32
         )
         search_entry.pack(side="left")
 
@@ -163,7 +276,7 @@ class DriverUpdaterApp(tk.Tk):
         self.stats_lbl.pack(side="right")
 
         # 4. Device Table
-        table_frame = ttk.Frame(self, padding=(16, 6))
+        table_frame = ttk.Frame(self, padding=(pad_x, 6))
         table_frame.pack(fill="both", expand=True)
 
         cols = ("status", "name", "category", "version", "date", "update", "provider")
@@ -177,18 +290,20 @@ class DriverUpdaterApp(tk.Tk):
         self.tree.heading("update", text="Available Update")
         self.tree.heading("provider", text="Provider")
 
-        self.tree.column("status", width=90, anchor="center")
-        self.tree.column("name", width=280)
-        self.tree.column("category", width=90, anchor="center")
-        self.tree.column("version", width=120, anchor="center")
-        self.tree.column("date", width=90, anchor="center")
-        self.tree.column("update", width=130, anchor="center")
-        self.tree.column("provider", width=120)
+        # High-DPI scaled column widths
+        w_factor = self.scale
+        self.tree.column("status", width=int(100 * w_factor), anchor="center")
+        self.tree.column("name", width=int(320 * w_factor))
+        self.tree.column("category", width=int(100 * w_factor), anchor="center")
+        self.tree.column("version", width=int(130 * w_factor), anchor="center")
+        self.tree.column("date", width=int(110 * w_factor), anchor="center")
+        self.tree.column("update", width=int(140 * w_factor), anchor="center")
+        self.tree.column("provider", width=int(140 * w_factor))
 
-        # Tags for colored rows
+        # Colored status tags
         self.tree.tag_configure("problem", foreground="#f87171")
         self.tree.tag_configure("update_ready", foreground="#60a5fa")
-        self.tree.tag_configure("ok", foreground="#e2e8f0")
+        self.tree.tag_configure("ok", foreground="#f1f5f9")
 
         self.tree.bind("<<TreeviewSelect>>", self.on_device_selected)
 
@@ -198,12 +313,13 @@ class DriverUpdaterApp(tk.Tk):
         scrollbar.pack(side="right", fill="y")
 
         # 5. Bottom Console / Progress
-        bottom_frame = ttk.Frame(self, padding=(16, 6, 16, 12))
+        bottom_frame = ttk.Frame(self, padding=(pad_x, 6, pad_x, int(14 * min(self.scale, 1.2))))
         bottom_frame.pack(fill="x")
 
         self.progress_bar = ttk.Progressbar(bottom_frame, mode="indeterminate")
-        self.progress_bar.pack(fill="x", pady=(0, 6))
+        self.progress_bar.pack(fill="x", pady=(0, 8))
 
+        f_size_code = max(9, int(9.5 * min(self.scale, 1.15)))
         self.log_text = tk.Text(
             bottom_frame,
             height=4,
@@ -211,10 +327,12 @@ class DriverUpdaterApp(tk.Tk):
             fg="#94a3b8",
             insertbackground="white",
             relief="flat",
-            font=("Consolas", 9)
+            font=("Consolas", f_size_code),
+            highlightthickness=1,
+            highlightbackground=self.card_light
         )
         self.log_text.pack(fill="x")
-        self.log("Ready. Click 'Scan Drivers' to scan this Windows system.")
+        self.log("Ready. Click 'Scan Drivers' to inspect this Windows system.")
 
     def log(self, message: str):
         self.log_text.insert("end", f"> {message}\n")
@@ -261,14 +379,12 @@ class DriverUpdaterApp(tk.Tk):
 
         filtered = []
         for d in self.devices:
-            # Category match
             if cat == "Errors / Missing":
                 if not d.has_problem and d.status.lower() != "error":
                     continue
             elif cat != "All" and cat.lower() not in d.device_class.lower():
                 continue
 
-            # Search match
             if search:
                 name_match = search in d.name.lower()
                 id_match = search in d.matching_device_id.lower()
@@ -296,7 +412,7 @@ class DriverUpdaterApp(tk.Tk):
 
             update_text = dev.available_update_version or "—"
 
-            item_id = self.tree.insert(
+            self.tree.insert(
                 "",
                 "end",
                 values=(
@@ -331,7 +447,6 @@ class DriverUpdaterApp(tk.Tk):
         self.progress_bar.start(10)
         self.log("Querying Microsoft Update Catalog for driver updates...")
 
-        # Target critical hardware devices (Network, Display, Audio, Bluetooth)
         targets = [
             d for d in self.devices
             if d.device_class.lower() in ("net", "display", "media", "bluetooth")
@@ -342,7 +457,7 @@ class DriverUpdaterApp(tk.Tk):
 
     def _run_online_check_thread(self, targets: List[DeviceInfo]):
         updates_found = 0
-        total = min(len(targets), 15)  # check top 15 critical devices to avoid hitting rate-limits
+        total = min(len(targets), 15)
         for i, dev in enumerate(targets[:total]):
             self.after(0, lambda d=dev, curr=i+1, tot=total: self.log(f"Checking [{curr}/{tot}] {d.name}..."))
             candidate = DriverFetcher.check_updates_for_device(
@@ -417,7 +532,6 @@ class DriverUpdaterApp(tk.Tk):
 
         dev = self.selected_device
         if not dev.download_url:
-            # Try fetching update for this single device directly
             self.progress_bar.start(10)
             self.log(f"Searching online update for: {dev.name}...")
 
@@ -487,6 +601,7 @@ class DriverUpdaterApp(tk.Tk):
 
 
 def launch_gui():
+    enable_high_dpi_awareness()
     app = DriverUpdaterApp()
     app.mainloop()
 
