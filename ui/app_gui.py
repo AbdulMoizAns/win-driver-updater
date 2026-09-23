@@ -16,6 +16,9 @@ from core.scanner import DriverScanner, DeviceInfo
 from core.fetcher import DriverFetcher
 from core.backup import DriverBackupManager
 from core.installer import DriverInstaller
+from core.safety import SafetyManager
+from core.reporter import ReportManager, OperationLogger
+from core.scheduler import SchedulerManager
 
 
 def is_admin() -> bool:
