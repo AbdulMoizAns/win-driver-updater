@@ -17,8 +17,14 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Enable Windows Per-Monitor High-DPI Awareness (V2) to prevent UI blur
+# Enable Windows Per-Monitor High-DPI Awareness (V2) & AppUserModelID for Taskbar Icon
 if sys.platform == "win32":
+    try:
+        myappid = "abdulmoizans.windriverupdater.gui.1.0"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
     try:
         ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     except Exception:

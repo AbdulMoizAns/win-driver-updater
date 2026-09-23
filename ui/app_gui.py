@@ -30,6 +30,14 @@ except ImportError:
 def enable_high_dpi_awareness():
     """Enables Windows Per-Monitor High-DPI Awareness (V2) to eliminate blurry UI and fonts."""
     if sys.platform == "win32":
+        # 1. Set explicit AppUserModelID so Windows Taskbar shows the app's custom icon, not python.exe
+        try:
+            myappid = "abdulmoizans.windriverupdater.gui.1.0"
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+
+        # 2. Set Per-Monitor High-DPI Awareness
         try:
             # Per-Monitor V2 (Windows 10 1703+)
             ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
@@ -102,15 +110,29 @@ class DriverUpdaterApp(tk.Tk):
         self._check_admin_banner()
 
     def _load_app_icons(self):
-        """Loads and sets the window icon and header logo with anti-aliased scaling."""
-        logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg")
-        if HAS_PIL and os.path.exists(logo_path):
+        """Loads and sets the window icon and header logo with native Windows taskbar integration."""
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+        ico_path = os.path.join(assets_dir, "logo.ico")
+        jpg_path = os.path.join(assets_dir, "logo.jpg")
+
+        # 1. Native Windows .ico for taskbar and titlebar
+        if os.path.exists(ico_path):
             try:
-                pil_img = Image.open(logo_path)
-                # Taskbar / Window icon (32x32)
-                icon_size = (int(32 * self.scale), int(32 * self.scale))
+                self.iconbitmap(default=ico_path)
+            except Exception:
+                try:
+                    self.wm_iconbitmap(ico_path)
+                except Exception:
+                    pass
+
+        # 2. High-DPI PIL icon and header logo
+        if HAS_PIL and os.path.exists(jpg_path):
+            try:
+                pil_img = Image.open(jpg_path)
+                # Taskbar / Window icon (48x48)
+                icon_size = (int(48 * self.scale), int(48 * self.scale))
                 self.icon_img = ImageTk.PhotoImage(pil_img.resize(icon_size, Image.Resampling.LANCZOS))
-                self.iconphoto(False, self.icon_img)
+                self.iconphoto(True, self.icon_img)
 
                 # Header logo (44x44)
                 hdr_size = (int(44 * self.scale), int(44 * self.scale))
